@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en" class="dk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="dash-token" content="__DASH_TOKEN__">
+<meta name="dash-version" content="__DASH_VERSION__">
+<title>backend</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600;700&amp;family=IBM+Plex+Serif:wght@400;600&amp;display=swap">
+<link rel="stylesheet" href="/vendor/xterm.css">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div id="app">
+  <header id="topbar"></header>
+  <div id="body">
+    <aside id="sidebar" aria-label="Plans files"></aside>
+    <div id="side-resize" role="separator" aria-orientation="vertical" aria-label="Resize sidebar" aria-valuemin="200" tabindex="0" title="Drag to resize · double-click to reset"></div>
+    <div id="global" aria-live="polite"></div>
+    <div id="main">
+      <div id="tabs" role="tablist" aria-label="Open tabs"></div>
+      <div id="views"></div>
+    </div>
+  </div>
+  <div id="toasts" aria-live="polite"></div>
+</div>
+<script src="/vendor/xterm.js"></script>
+<script src="/vendor/addon-fit.js"></script>
+<script src="/vendor/marked.js"></script>
+<script src="/vendor/purify.js"></script>
+<script src="/skills.js"></script>
+<script src="/worktrees.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+{
+  "name": "backend",
+  "displayName": "Backend (Rails)",
+  "version": "0.12.1",
+  "description": "Rails backend lifecycle: system & feature overviews, feature/story planning, stacked subtask implementation, commits, review, docs and bug fixing — driven by Jira, Confluence, Figma and GitLab/GitHub.",
+  "author": {
+    "name": "Ahmed Fawzy",
+    "url": "https://github.com/AhmadFawzyFcih"
+  },
+  "repository": "https://github.com/AhmadFawzyFcih/ai-sdlc-workflow",
+  "license": "MIT",
+  "keywords": ["rails", "ruby", "rspec", "jira", "confluence", "gitlab", "workflow"]
+}

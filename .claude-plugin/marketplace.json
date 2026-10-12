@@ -1,0 +1,15 @@
+{
+  "name": "ai-sdlc-workflow",
+  "description": "Ahmed Fawzy's Claude Code plugins for the day-to-day development lifecycle",
+  "owner": {
+    "name": "Ahmed Fawzy",
+    "url": "https://github.com/AhmadFawzyFcih"
+  },
+  "plugins": [
+    {
+      "name": "backend",
+      "source": "./plugins/backend",
+      "description": "Rails backend lifecycle: system & feature overviews, feature/story planning, stacked subtask implementation, commits, review, docs, bug fixing"
+    }
+  ]
+}

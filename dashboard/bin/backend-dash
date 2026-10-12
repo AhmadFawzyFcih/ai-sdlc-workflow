@@ -1,0 +1,20 @@
+#!/bin/sh
+# Starts the backend dashboard. Works through a symlink (e.g. ~/.local/bin/backend-dash).
+set -e
+src="$0"
+while [ -h "$src" ]; do
+  dir="$(cd -P "$(dirname "$src")" && pwd)"
+  src="$(readlink "$src")"
+  case "$src" in /*) ;; *) src="$dir/$src" ;; esac
+done
+root="$(cd -P "$(dirname "$src")/.." && pwd)"
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "backend-dash needs Node.js 18.17+ (brew install node)." >&2
+  exit 1
+fi
+if [ ! -d "$root/node_modules/ws" ]; then
+  echo "First run: installing dashboard dependencies…"
+  (cd "$root" && npm install --omit=dev --no-audit --no-fund)
+fi
+exec node "$root/server.js" "$@"

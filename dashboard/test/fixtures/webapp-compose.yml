@@ -1,0 +1,298 @@
+# Shaped like a real Rails app's compose file (services, ports, volumes); all names and keys are placeholders.
+services:
+  postgres:
+    restart: always
+    image: imresamu/postgis:16-3.5-alpine
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./postgres-data:/var/lib/postgresql/data
+    command:
+      postgres -c shared_preload_libraries=pg_stat_statements -c
+      wal_level=logical -c pg_stat_statements.track=all
+
+  mailcatcher:
+    image: schickling/mailcatcher
+    ports:
+      - "1080:1080"
+
+  minio:
+    image: registry.example.com/team/minio:RELEASE.2021-06-09T18-51-39Z
+    ports:
+      - "9000:9000"
+    environment:
+      MINIO_ACCESS_KEY: minio
+      MINIO_SECRET_KEY: minio123
+    command: server /export
+    volumes:
+      - ./fakes3/.minio/data:/export
+      - ./fakes3/.minio/config:/root/.minio
+
+  memcached:
+    image: memcached
+
+  document_engine:
+    image: example/document-engine:1.0
+    environment:
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: document_engine
+      PGHOST: postgres
+      PGPORT: 5432
+
+      # License key.
+      ACTIVATION_KEY: example-activation-key
+      REMOTE_URL_FETCH_TIMEOUT: 20000
+      # Secret token used for authenticating API requests.
+      API_AUTH_TOKEN: secretapi
+      # Base key used for deriving secret keys for the purposes of authentication.
+      SECRET_KEY_BASE: secret-key-base
+      # Public key used for verification of JWTs from web clients. It has to be in the PEM format.
+      JWT_PUBLIC_KEY: |
+        -----BEGIN PUBLIC KEY-----
+        EXAMPLE
+        -----END PUBLIC KEY-----
+      JWT_ALGORITHM: RS256
+      DASHBOARD_USERNAME: dashboard
+      DASHBOARD_PASSWORD: secret
+    ports:
+      - 5000:5000
+    volumes:
+      - ./docker/document_engine/font-substitutions.json:/font-substitutions.json:ro
+    depends_on:
+      - postgres
+
+  redis:
+    image: redis:6.2.11
+    volumes:
+      - ./fakes3/redis/data:/data
+    # ports:
+    #   - "6379:6379"
+
+  web:
+    image: registry.example.com/team/base_image:${DEP_HASH}
+    build:
+      context: .
+      target: development_image
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - HISTFILE=/root/hist/.bash_history
+      - VIPS_BLOCK_UNTRUSTED=1
+      - RUBY_YJIT_ENABLE=1
+      - COVERBAND_ENABLED=true
+      - COVERBAND_DISABLE_AUTO_START=true
+      #- DEBUGGER_PORT=22346
+    stdin_open: true
+    tty: true
+    command: bash -c "bundle exec puma -t 8:16 -w 3 -p 3000"
+    ports:
+      - "3000:3000"
+      - "22346:22346"
+    links:
+      - postgres
+      - redis
+      - memcached
+      - minio
+      - document_engine
+      - virus_scanner
+      # - webpacker
+    volumes:
+      - .:/app:cached
+      - ./system:/shared_files:delegated
+      - web_tmp:/app/tmp
+      - ./config/scanner.conf:/etc/scanner/scanner.conf
+      - bashhistory:/root/hist
+      # - ~/.aws:/root/.aws:ro
+
+  pdf_generator:
+    image: registry.example.com/team/branch_master
+    environment:
+      - REDIS_HOST_NAME=redis
+      - REDIS_PASSWORD=""
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+      - REDIS_RESQUE_NAMESPACE=resque:dev
+      - MINIMUM_NUMBER_OF_WORKERS=2
+      - S3_ACCESS_KEY=minio
+      - S3_SECRET_KEY=minio123
+      - S3_BUCKET_NAME=example-dev
+      - S3_ENDPOINT_URL=http://minio:9000
+      - S3_APPEND_BUCKET_NAME_TO_KEY=false
+      - S3_FORCE_PATH_STYLE=true
+      - S3_IS_COPYING_TO_AWS=false
+
+  compare_service:
+    image: registry.example.com/team/compare_service:latest
+    environment:
+      - MEMCACHED_STRING=memcached:11211
+      - OTP_KEY=example
+      - PORT=4000
+      - SECRET_KEY_BASE=secretkeybase
+      - REPLACE_OS_VARS=true
+      - NODE_COOKIE=cookie
+      - MY_POD_IP=127.0.0.1
+    ports:
+      - "4000:4000"
+
+  worker:
+    image: registry.example.com/team/base_image:${DEP_HASH}
+    build:
+      context: .
+      target: development_image
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - HISTFILE=/root/hist/.bash_history
+      - VIPS_BLOCK_UNTRUSTED=1
+      - COVERBAND_ENABLED=true
+      - COVERBAND_DISABLE_AUTO_START=true
+
+      # - DEBUGGER_PORT=22347
+      # - DEBUGGER_PORT=22347
+    command: bash -c "bundle exec rake resque:pool"
+    ports:
+      - "22347:22347"
+    volumes:
+      - .:/app
+      - ./system:/shared_files:delegated
+      - resque_tmp:/app/tmp
+      - ./config/scanner.conf:/etc/scanner/scanner.conf
+      #- ~/.aws:/root/.aws:ro
+    links:
+      - postgres
+      - redis
+      - memcached
+      - minio
+
+  async_worker:
+    image: registry.example.com/team/base_image:${DEP_HASH}
+    build:
+      context: .
+      target: development_image
+    entrypoint: ["bundle", "exec"]
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - HISTFILE=/root/hist/.bash_history
+      - VIPS_BLOCK_UNTRUSTED=1
+      # - DEBUGGER_PORT=22347
+      # - DEBUGGER_PORT=22347
+    command: bash -c "ruby bin/async_job_server"
+    ports:
+      - "22348:22347"
+    volumes:
+      - .:/app
+      - ./system:/shared_files:delegated
+      - async_tmp:/app/tmp
+      - ./config/scanner.conf:/etc/scanner/scanner.conf
+    links:
+      - postgres
+      - redis
+      - memcached
+      - minio
+
+
+  anycable:
+    image: registry.example.com/team/base_image:${DEP_HASH}
+    build:
+      context: .
+      target: development_image
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - HISTFILE=/root/hist/.bash_history
+    command: bash -c "bundle exec anycable"
+    volumes:
+      - .:/app
+      - ./system:/shared_files:delegated
+      - anycable_tmp:/app/tmp
+      - ./config/scanner.conf:/etc/scanner/scanner.conf
+    depends_on:
+      - anycable-go
+      - postgres
+      - redis
+      - memcached
+      - minio
+
+  anycable-go:
+    image: anycable/anycable-go:1.5
+    ports:
+      - "8080:8080"
+    environment:
+      ANYCABLE_BROADCAST_ADAPTER: "redis"
+      ANYCABLE_HOST: "0.0.0.0"
+      ANYCABLE_PORT: 8080
+      ANYCABLE_REDIS_URL: "redis://redis:6379"
+      ANYCABLE_RPC_HOST: "anycable:50051"
+      ANYCABLE_STREAMS_WHISPER: "true"
+      ANYCABLE_STREAMS_TURBO: "true"
+      ANYCABLE_LOG_LEVEL: "debug"
+
+  render-service:
+    image: registry.example.com/team/branch_main
+    ports:
+      - "3001:3000"
+    environment:
+      - AWS_ACCESS_KEY_ID=minio
+      - AWS_REGION=us-east-1
+      - AWS_SECRET_ACCESS_KEY=minio123
+      - AWS_S3_BUCKET=example-dev
+      - AWS_ENDPOINT_URL=http://minio:9000
+      - RACK_ENV=development
+      - GRAYLOG_SERVER=graylog.example
+      - GRAYLOG_LEVEL=DEBUG
+      - GRAYLOG_PORT=12202222
+      - GRAYLOG_FACILITY=render_service
+    restart: on-failure
+    command: bundle exec rackup config.ru -p 3000 --host 0.0.0.0
+  file_converter:
+    image: registry.example.com/team/branch_master
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+      # Must match the Rails app namespace (config/redis.yml -> resque:#{Rails.env}), else jobs are never consumed
+      - REDIS_RESQUE_NAMESPACE=resque:development
+      - CONVERT_THREADS=2
+      - AWS_ACCESS_KEY_ID=minio
+      - AWS_SECRET_ACCESS_KEY=minio123
+      - AWS_S3_BUCKET=example-dev
+      - AWS_ENDPOINT_URL=http://minio:9000
+    command: bash -c "rake resque:pool"
+    # links:
+    #   - redis
+    #   - minio
+
+  virus_scanner:
+    image: example/virus-scanner:1.0
+    ports:
+      - "3310:3310"
+
+  headless-chrome-service:
+    image: zenika/alpine-chrome:latest
+    command:
+      [
+        chromium-browser,
+        "--headless",
+        "--no-sandbox",
+        "--remote-debugging-address=0.0.0.0",
+        "--remote-debugging-port=9222",
+      ]
+    ports:
+      - "9222:9222"
+
+volumes:
+  bashhistory:
+  web_tmp:
+  resque_tmp:
+  async_tmp:
+  anycable_tmp:
+

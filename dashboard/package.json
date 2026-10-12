@@ -1,0 +1,28 @@
+{
+  "name": "backend-dashboard",
+  "version": "1.6.0",
+  "private": true,
+  "description": "Local dashboard for the backend Claude Code plugin: .plans/ browser, skill wizards, live Claude Code sessions in tabs, and git worktrees with their own backend, frontend and database.",
+  "type": "module",
+  "bin": {
+    "backend-dash": "bin/backend-dash"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/*.test.js",
+    "test:e2e": "node --test --test-concurrency=1 test/e2e/*.e2e.test.js"
+  },
+  "engines": {
+    "node": ">=18.17"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@lydell/node-pty": "^1.1.0",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0",
+    "dompurify": "^3.2.0",
+    "marked": "^15.0.0",
+    "ws": "^8.18.0",
+    "yaml": "^2.6.1"
+  }
+}
