@@ -27,7 +27,8 @@
     const curWt = () => envOf(cur());
     const mainOf = (path) => { const p = S.projects.find((x) => x.path === path); return p && p.worktree ? p.worktree.main : path; };
     const wtOfPath = (path) => S.wt.list.find((w) => w.path === path) || null;
-    const newTab = (p) => window.open(location.pathname + '?p=' + encodeURIComponent(projectKey(p)), '_blank', 'noopener');
+    // Named and without noopener, so notifications and "Open session" can switch to it later (see focusOrOpen).
+    const newTab = (p) => X.focusOrOpen(projectKey(p), location.pathname + '?p=' + encodeURIComponent(projectKey(p)));
     const titleOf = (key) => {
       const ix = S.index; if (!ix || !key) return '';
       for (const it of ix.items || []) {
@@ -361,16 +362,16 @@
       let info;
       try { info = await api('GET', '/api/worktrees/inspect?' + qs({ project: main })); }
       catch (e) { return toast({ title: 'Cannot create a worktree here', body: apiError(e), timeout: 9000 }); }
-      const st = { mode: 'copy', branch: null, newBranch: '', base: 'HEAD', folderEdited: false, name: '', nameEdited: false, start: true, newTabAfter: true, services: info.services.map((s) => s.name), busy: false, source: info.sharedDb, testSource: info.sharedTestDb || '' };
+      const st = { mode: 'copy', branch: '', folderEdited: false, name: '', nameEdited: false, start: true, newTabAfter: true, services: info.services.map((s) => s.name), busy: false, source: info.sharedDb, testSource: info.sharedTestDb || '' };
       const focus = X.focusKey();
       const local = new Map(info.branches.map((b) => [b.name, b]));
       const planned = info.planBranches.filter((b, i, a) => a.findIndex((x) => x.name === b.name) === i);
       const free = (name) => !(local.get(name) && local.get(name).openAt);
       const pick = planned.find((b) => b.key === focus && free(b.name)) || planned.find((b) => free(b.name)) || info.branches.find((b) => free(b.name));
-      st.branch = pick ? pick.name : '__new';
+      st.branch = pick ? pick.name : '';
       if (!info.databases.length) st.mode = 'shared';
       const keyOf = (b) => ((b.match(/[A-Z][A-Z0-9]+-\d+/) || [])[0] || b.split('/').pop());
-      const nameFor = () => (st.nameEdited ? st.name : keyOf(st.branch === '__new' ? st.newBranch || 'new' : st.branch));
+      const nameFor = () => (st.nameEdited ? st.name : keyOf(st.branch.trim() || 'new'));
       const folderFor = () => info.folderBase + '/' + nameFor();
       dialog('wide', (dlg, close) => {
         const body = h('div', { class: 'dlg' });
@@ -379,10 +380,18 @@
           const folderInput = body.querySelector('[data-k="folder"]');
           const folder = folderInput && st.folderEdited ? folderInput.value : folderFor();
           body.textContent = '';
-          const branchSel = h('select', { class: 'select mono', 'aria-label': 'Branch', onchange: (e) => { st.branch = e.target.value; render(); } },
-            planned.length ? h('optgroup', { label: 'From your plans' }, planned.map((b) => { const lb = local.get(b.name); return h('option', { value: b.name, selected: st.branch === b.name, disabled: !!(lb && lb.openAt) }, `${b.name} — ${b.key}${b.title ? ' · ' + b.title : ''}${lb ? (lb.openAt ? ' · open in ' + tilde(lb.openAt) : '') : ' · new branch'}`); })) : null,
-            h('optgroup', { label: 'Local branches' }, info.branches.filter((b) => !planned.some((p) => p.name === b.name)).map((b) => h('option', { value: b.name, selected: st.branch === b.name, disabled: !!b.openAt }, b.name + (b.openAt ? ' — already open in ' + tilde(b.openAt) : '')))),
-            h('option', { value: '__new', selected: st.branch === '__new' }, '+ New branch…'));
+          const openAt = () => { const lb = local.get(st.branch.trim()); return lb && lb.openAt; };
+          const branchHint = () => (openAt() ? 'Already open in ' + tilde(openAt()) + ' — a branch can be open in only one folder at a time (git rule).'
+            : 'Fetched from origin if it exists there; otherwise created from master.');
+          const onBranch = (e) => {
+            st.branch = e.target.value;
+            const hint = body.querySelector('[data-k="branchHint"]'); if (hint) { hint.textContent = branchHint(); hint.style.color = openAt() ? 'var(--errText)' : ''; }
+            const btn = body.querySelector('[data-k="create"]'); if (btn) btn.disabled = st.busy || !info.slot || !st.branch.trim() || !!openAt();
+            const n = body.querySelector('[data-k="name"]'); if (n && !st.nameEdited) n.value = nameFor();
+            if (!st.folderEdited) { const f = body.querySelector('[data-k="folder"]'); if (f) f.value = folderFor(); }
+          };
+          const suggest = planned.map((b) => ({ name: b.name, label: b.key + (b.title ? ' · ' + b.title : '') }))
+            .concat(info.branches.filter((b) => !b.openAt && !planned.some((p) => p.name === b.name)).map((b) => ({ name: b.name, label: 'local branch' })));
           const opt = (mode, title, note, extra) => h('label', { class: 'opt' + (st.mode === mode ? ' on' : '') },
             h('input', { type: 'radio', name: 'db', checked: st.mode === mode, disabled: mode !== 'shared' && !info.databases.length && mode === 'copy', onchange: () => { st.mode = mode; render(); } }),
             h('span', {}, h('b', {}, title), extra || null, h('br'), h('span', { class: 'faint' }, note)));
@@ -390,11 +399,10 @@
           const portLine = info.ports.filter((p) => [3000, 8080].includes(p.main) || p.service === 'web').slice(0, 3).map((p) => `${p.service} :${p.port}`).join(' · ');
           add(body,
             h('div', { class: 'section-head', style: 'align-items:center' }, h('h2', {}, 'New worktree'), h('button', { class: 'btn icon', 'aria-label': 'Close', onclick: close }, '×')),
-            h('label', { class: 'field' }, h('span', {}, 'Branch'), branchSel,
-              h('span', { class: 'faint' }, 'A branch can be open in only one folder at a time (git rule), so branches already open elsewhere are greyed out.')),
-            st.branch === '__new' ? h('div', { class: 'row-gap', style: 'align-items:flex-end' },
-              h('label', { class: 'field', style: 'flex:2 1 240px' }, h('span', {}, 'New branch name'), h('input', { class: 'input', 'data-k': 'newBranch', value: st.newBranch, placeholder: 'feature/PROJ-123-short-name', oninput: (e) => { st.newBranch = e.target.value; if (!st.folderEdited) { const f = body.querySelector('[data-k="folder"]'); if (f) f.value = folderFor(); } } })),
-              h('label', { class: 'field', style: 'flex:1 1 140px' }, h('span', {}, 'From'), h('select', { class: 'select', onchange: (e) => { st.base = e.target.value; } }, ['HEAD'].concat(info.branches.map((b) => b.name)).map((b) => h('option', { value: b, selected: st.base === b }, b === 'HEAD' ? 'current branch of main' : b))))) : null,
+            h('label', { class: 'field' }, h('span', {}, 'Branch'),
+              h('input', { class: 'input mono', 'data-k': 'branch', 'aria-label': 'Branch', list: 'wt-branch-suggest', value: st.branch, placeholder: 'feature/PROJ-123-short-name', autocomplete: 'off', spellcheck: 'false', oninput: onBranch }),
+              h('datalist', { id: 'wt-branch-suggest' }, suggest.map((b) => h('option', { value: b.name }, b.label))),
+              h('span', { class: 'faint', 'data-k': 'branchHint', style: openAt() ? 'color:var(--errText)' : '' }, branchHint())),
             h('label', { class: 'field' }, h('span', {}, 'Name'),
               h('input', { class: 'input', 'data-k': 'name', value: nameFor(), placeholder: 'PROJ-123', oninput: (e) => { st.name = e.target.value; st.nameEdited = true; if (!st.folderEdited) { const f = body.querySelector('[data-k="folder"]'); if (f) f.value = folderFor(); } } }),
               h('span', { class: 'faint' }, 'The worktree’s own name — its folder, databases and tab. You can check out other branches in it later.')),
@@ -421,19 +429,21 @@
             h('div', { class: 'err sub', style: 'color:var(--errText)', 'data-k': 'err' }),
             h('div', { class: 'row-gap', style: 'justify-content:flex-end' },
               h('button', { class: 'btn', onclick: close }, 'Cancel'),
-              h('button', { class: 'btn primary', 'data-k': 'create', disabled: st.busy || !info.slot, onclick: async (e) => {
+              h('button', { class: 'btn primary', 'data-k': 'create', disabled: st.busy || !info.slot || !st.branch.trim() || !!openAt(), onclick: async (e) => {
                 const errEl = body.querySelector('[data-k="err"]');
                 const btn = e.currentTarget;
                 st.busy = true; btn.disabled = true; btn.textContent = st.mode === 'copy' ? 'Creating — copying the database…' : 'Creating…';
                 try {
                   const r = await api('POST', '/api/worktrees', {
-                    main, name: body.querySelector('[data-k="name"]').value.trim(), branch: st.branch === '__new' ? null : st.branch, newBranch: st.branch === '__new' ? st.newBranch : null, base: st.base,
+                    main, name: body.querySelector('[data-k="name"]').value.trim(), branch: st.branch.trim(),
                     folder: body.querySelector('[data-k="folder"]').value, dbMode: st.mode, sourceDb: st.source, sourceTestDb: st.testSource || null, services: st.services, start: st.start
                   });
                   close();
                   await X.loadProjects();
                   await load();
-                  toast({ small: true, title: 'Worktree created ', mono: r.worktree.key + ' · ' + tilde(r.worktree.path), timeout: 4000 });
+                  const from = r.worktree.from;
+                  const how = !from ? '' : from.created ? 'new branch from ' + from.ref + ' · ' : from.ref.startsWith('origin/') ? 'checked out from origin · ' : '';
+                  toast({ small: true, title: 'Worktree created ', mono: r.worktree.key + ' · ' + how + tilde(r.worktree.path), timeout: 5000 });
                   if (st.newTabAfter) { X.renderTopbar(); newTab(r.project); }
                   else { openPage(null); await X.switchProject(r.worktree.path); X.activate('env'); }
                 } catch (x) {

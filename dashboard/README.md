@@ -72,6 +72,8 @@ backend-dash
 
 A worktree is a second folder of the same git repository with another branch checked out. The dashboard creates one (`git worktree add`) next to your project — `~/work/webapp-worktrees/PROJ-123` — and gives it its own running app, so two branches can run side by side with your main checkout. It has **its own name** (the ticket key by default): the folder, databases and tab use it, and you can check out other branches in it later — cards and the delete dialog show the branch checked out now.
 
+**The branch** is typed in (plan and local branches are suggested): an existing local branch is checked out as it is; otherwise the dashboard fetches it from `origin` and checks it out tracking `origin/<branch>`; if origin does not have it either, it creates it from a freshly fetched `origin/master` (origin's default branch), without tracking master. If origin cannot be reached, it stops and says so instead of guessing.
+
 **What a worktree gets from the main checkout**: `.plans` (always a link to main's — every worktree sees the same plans), `.claude/backend.yml`, `.env`, keys; git submodules checked out; git-ignored repos inside the project (e.g. `frontend/planviewer`) cloned locally on the same branch with the same `origin`.
 
 **Open in VS Code** (Environment tab, before *Start all*, and on every card) opens that checkout's folder — its Source Control view shows the worktree's own changes. The Environment tab can be closed; *Environment →* on Home or the card brings it back.

@@ -781,30 +781,70 @@
     toast({ kind, sid: s.id, title, body: s.detail, timeout: kind === 'needs' ? 0 : 9000,
       actions: [{ label: 'Open session', primary: true, fn: () => goToSession(S.sessions.get(s.id) || s) }, { label: 'Later' }] });
     if ('Notification' in window && Notification.permission === 'granted' && notifyHere(s) && (document.visibilityState !== 'visible' || kind === 'needs')) {
-      try {
-        const n = new Notification(title, { body: (s.detail || '') + ' — ' + (s.projectName || ''), tag: s.id + kind, requireInteraction: kind === 'needs' });
+      const opts = { body: (s.detail || '') + ' — ' + (s.projectName || ''), tag: s.id + kind, requireInteraction: kind === 'needs' };
+      (async () => {
+        // Through the service worker, a click focuses the session's own tab (see sw.js); without it, this tab routes.
+        const reg = await swReady();
+        const target = await sessionTarget(s);
+        if (reg && target) return reg.showNotification(title, Object.assign(opts, { data: { key: target.key, sid: s.id, url: target.url } }));
+        const n = new Notification(title, opts);
         n.onclick = () => { n.close(); goToSession(S.sessions.get(s.id) || s); };
-      } catch {}
+      })().catch(() => {});
     }
+  }
+
+  // The service worker that routes notification clicks to the right tab (null where unsupported).
+  let swReg = null;
+  async function swReady() {
+    if (!('serviceWorker' in navigator)) return null;
+    try { if (!swReg) swReg = await navigator.serviceWorker.register('/sw.js'); await navigator.serviceWorker.ready; return swReg; } catch { return null; }
+  }
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.addEventListener('message', (e) => {
+      const m = e.data || {};
+      if (m.open) { S.pendingSid = m.open; openPending(); } // waits for boot / the session list if needed
+    });
+  }
+
+  // The tab a session belongs in: its environment's ?p= key and the URL that opens it there.
+  // A session from a worktree this tab has not heard of yet (created in another tab) refreshes the project list first.
+  async function sessionTarget(s) {
+    let p = S.projects.find((x) => x.path === s.project);
+    if (!p) { try { S.projects = (await api('GET', '/api/projects')).projects; } catch {} p = S.projects.find((x) => x.path === s.project); }
+    if (!p) return null;
+    const key = W.projectKey(p);
+    return { key, url: location.pathname + '?p=' + encodeURIComponent(key) + '&s=' + encodeURIComponent(s.id) };
   }
 
   // Open a session where it belongs:
   //  1. its environment is the one this tab has open → open it here;
-  //  2. another dashboard tab has that environment open → switch to that tab and open it there;
-  //  3. no tab has it → a new tab on that environment, which opens the session as it loads.
-  function goToSession(s) {
+  //  2. otherwise the service worker focuses the tab that has that environment open and opens it there,
+  //     or opens a new tab on that environment, which opens the session as it loads.
+  async function goToSession(s) {
     if (!s) return;
-    const p = S.projects.find((x) => x.path === s.project);
-    if (s.project === S.project || !p) { try { window.focus(); } catch {} openSession(s.id); return; }
-    const key = W.projectKey(p);
-    const tab = [...others.values()].find((m) => m.project === s.project && Date.now() - m.at < 12000);
-    if (tab && bc) {
-      bc.postMessage({ open: s.id, to: tab.id });
-      window.open('', 'bd:' + key); // brings that named tab to the front
-      return;
-    }
-    window.open(location.pathname + '?p=' + encodeURIComponent(key) + '&s=' + encodeURIComponent(s.id), 'bd:' + key);
+    if (s.project === S.project) { try { window.focus(); } catch {} openSession(s.id); return; }
+    const target = await sessionTarget(s);
+    if (!target) { toast({ title: 'That session’s project is not in the list any more', body: s.project, timeout: 6000 }); return; }
+    focusOrOpen(target.key, target.url, s.id);
   }
+
+  // Switch to the dashboard tab that has environment `key` open (every dashboard tab is named 'bd:<key>' and
+  // opened without noopener, so the browser can find it by name), asking it to open session `sid`.
+  // No such tab → the browser hands back a fresh blank one, which is sent to `url`. Must run from a click.
+  function focusOrOpen(key, url, sid) {
+    const w = window.open('', 'bd:' + key);
+    if (!w) { toast({ title: 'The browser blocked the new tab', body: 'Allow pop-ups for this page, then try again.', timeout: 8000 }); return; }
+    let ours = false;
+    try { ours = w.location.origin === location.origin && w.location.pathname === location.pathname; } catch {}
+    if (!ours) { w.location.href = url; return; }
+    if (sid) w.postMessage({ open: sid }, location.origin);
+    try { w.focus(); } catch {}
+  }
+  // Another dashboard tab asking this one to open a session (focusOrOpen).
+  window.addEventListener('message', (e) => {
+    if (e.origin !== location.origin || !e.data || !e.data.open) return;
+    S.pendingSid = e.data.open; openPending();
+  });
 
   // A tab opened by goToSession (?s=<id>) opens that session once it is known.
   function openPending() {
@@ -1177,7 +1217,7 @@
     switchProject: (p) => switchProject(p), activate: (id) => activate(id), renderTabs: () => renderTabs(), viewEl: (id, c) => viewEl(id, c),
     openProc: (id) => openProc(id), openSession: (id) => openSession(id), startSession: (c, t, k) => startSession(c, t, k),
     addProjectDialog: () => addProjectDialog(), removeProject: () => removeProject(), loadProjects: () => loadProjects(), renderTopbar: () => renderTopbar(),
-    focusKey: () => focusKey(), termGlyph: (s) => termGlyph(s), STATUS_LABEL, send: (o) => send(o),
+    focusKey: () => focusKey(), focusOrOpen: (k, u, sid) => focusOrOpen(k, u, sid), termGlyph: (s) => termGlyph(s), STATUS_LABEL, send: (o) => send(o),
     goToSession: (s) => goToSession(s), needsElsewhere: () => needsElsewhere()
   });
 
@@ -1191,6 +1231,7 @@
     renderTopbar(); renderSidebarShell(); renderTabs();
     connect();
     beat();
+    swReady();
     W.load();
     await refreshProject().catch((e) => toast({ title: 'Could not read the project', body: e.message, timeout: 6000 }));
     activate('home');

@@ -316,6 +316,30 @@ export class Worktrees extends EventEmitter {
     return local.map((name) => ({ name, openAt: open[name] || null }));
   }
 
+  // How `git worktree add` gets the branch: the local one if it exists; else fetched from origin and tracking it;
+  // else created from a freshly fetched default branch (origin/HEAD → master → main), without tracking it.
+  async resolveBranch(main, branch, folder) {
+    const has = async (ref) => (await this.git(main, ['rev-parse', '--verify', '--quiet', ref])).code === 0;
+    const hasOrigin = (await this.git(main, ['remote', 'get-url', 'origin'])).code === 0;
+    const fetch = async (b) => {
+      const r = await this.git(main, ['fetch', '--no-tags', 'origin', `+refs/heads/${b}:refs/remotes/origin/${b}`], 120_000);
+      if (r.code === 0) return true;
+      if (/couldn't find remote ref/i.test(r.stderr)) return false;
+      throw httpError(400, 'Could not fetch from origin: ' + (r.stderr || r.stdout).trim().replace(/^fatal: /, ''));
+    };
+    const onRemote = hasOrigin && await fetch(branch);
+    if (await has('refs/heads/' + branch)) return { args: [folder, branch], created: false, ref: branch };
+    if (onRemote) return { args: ['--track', '-b', branch, folder, 'origin/' + branch], created: false, ref: 'origin/' + branch };
+    let base = null;
+    if (hasOrigin) {
+      const head = await this.git(main, ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD']);
+      const candidates = [head.code === 0 ? head.stdout.trim().replace(/^origin\//, '') : null, 'master', 'main'].filter(Boolean);
+      for (const b of candidates) if (await fetch(b)) { base = 'origin/' + b; break; }
+    }
+    if (!base) base = (await has('refs/heads/master')) ? 'master' : (await has('refs/heads/main')) ? 'main' : 'HEAD';
+    return { args: ['--no-track', '-b', branch, folder, base], created: true, ref: base };
+  }
+
   // Branches the plans know about (subtasks in state.json), whether or not they exist yet.
   async planBranches(main) {
     try {
@@ -471,10 +495,12 @@ export class Worktrees extends EventEmitter {
     };
 
     fs.mkdirSync(path.dirname(folder), { recursive: true });
-    const add = o.newBranch
-      ? await this.git(main, ['worktree', 'add', '-b', branch, folder, o.base || 'HEAD'])
-      : await this.git(main, ['worktree', 'add', folder, branch]);
+    const plan = o.newBranch
+      ? { args: ['-b', branch, folder, o.base || 'HEAD'], created: true, ref: o.base || 'HEAD' }
+      : await this.resolveBranch(main, branch, folder);
+    const add = await this.git(main, ['worktree', 'add', ...plan.args]);
     if (add.code !== 0) throw httpError(400, (add.stderr || add.stdout).trim().replace(/^fatal: /, ''));
+    rec.from = { created: plan.created, ref: plan.ref };
     try {
       if (mode !== 'shared') {
         const yml = (() => { try { return fs.readFileSync(path.join(folder, 'config', 'database.yml'), 'utf8'); } catch { return null; } })();
@@ -492,6 +518,7 @@ export class Worktrees extends EventEmitter {
       await this.writeFrontend(rec);
     } catch (e) {
       await this.git(main, ['worktree', 'remove', '--force', folder]);
+      if (plan.created) await this.git(main, ['branch', '-D', branch]);
       fs.rmSync(this.cfgDir(rec), { recursive: true, force: true });
       for (const n of [rec.db.name, rec.db.test && rec.db.test.name]) if (n) await this.dropDbNamed(main, n).catch(() => {});
       throw e;

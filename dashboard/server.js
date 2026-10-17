@@ -143,6 +143,7 @@ const STATIC = {
   '/skills.js': ['public/skills.js', 'text/javascript'],
   '/worktrees.js': ['public/worktrees.js', 'text/javascript'],
   '/app.css': ['public/app.css', 'text/css'],
+  '/sw.js': ['public/sw.js', 'text/javascript'],
   '/vendor/xterm.js': ['node_modules/@xterm/xterm/lib/xterm.js', 'text/javascript'],
   '/vendor/xterm.css': ['node_modules/@xterm/xterm/css/xterm.css', 'text/css'],
   '/vendor/addon-fit.js': ['node_modules/@xterm/addon-fit/lib/addon-fit.js', 'text/javascript'],
